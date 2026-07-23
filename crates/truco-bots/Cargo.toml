@@ -1,0 +1,19 @@
+[package]
+name = "truco-bots"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+smallvec = { version = "1.11", features = ["serde"] }
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+truco-bot-core = { path = "../truco-bot-core" }
+truco-engine.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "crates/truco-bot-core",
+    "crates/truco-bots",
+    "crates/truco-policy-bot",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Elvis Sikora", "Baixada contributors"]
+repository = "https://github.com/baixada-cards/truco-bots"
+
+[workspace.dependencies]
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync"] }
+truco-engine = { git = "https://github.com/baixada-cards/truco-engine", rev = "5e67d19a710c8396a44dc51e8fae14f12201a3d4" }
+truco-policy-format = { git = "https://github.com/baixada-cards/truco-solver", rev = "903587d3d6279c66418cee50790ff049dcced793" }

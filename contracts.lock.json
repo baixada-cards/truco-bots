@@ -1,0 +1,15 @@
+{
+  "format": "baixada-bot-contract-lock/v1",
+  "engine": {
+    "package": "truco-engine",
+    "repository": "https://github.com/baixada-cards/truco-engine",
+    "revision": "5e67d19a710c8396a44dc51e8fae14f12201a3d4"
+  },
+  "policy_format": {
+    "package": "truco-policy-format",
+    "repository": "https://github.com/baixada-cards/truco-solver",
+    "revision": "903587d3d6279c66418cee50790ff049dcced793",
+    "wire_format": "truco-policy-bot/v1",
+    "binary_format": "TPB1"
+  }
+}

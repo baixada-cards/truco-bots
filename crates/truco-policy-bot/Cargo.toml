@@ -1,0 +1,14 @@
+[package]
+name = "truco-policy-bot"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+truco-engine.workspace = true
+truco-bot-core = { path = "../truco-bot-core" }
+truco-policy-format.workspace = true
+serde = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { version = "1.11", features = ["serde"] }
