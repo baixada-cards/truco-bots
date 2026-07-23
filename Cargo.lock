@@ -1082,7 +1082,7 @@ dependencies = [
 name = "truco-bot-core"
 version = "0.1.0"
 dependencies = [
- "rand 0.8.7",
+ "rand 0.10.2",
  "serde",
  "serde_json",
  "smallvec",
@@ -1094,7 +1094,7 @@ dependencies = [
 name = "truco-bots"
 version = "0.1.0"
 dependencies = [
- "rand 0.8.7",
+ "rand 0.10.2",
  "reqwest",
  "serde",
  "serde_json",
@@ -1122,7 +1122,7 @@ dependencies = [
 name = "truco-policy-bot"
 version = "0.1.0"
 dependencies = [
- "rand 0.8.7",
+ "rand 0.10.2",
  "serde",
  "smallvec",
  "thiserror",
