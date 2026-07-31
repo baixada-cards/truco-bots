@@ -15,6 +15,30 @@ updates:
       rust:
         patterns:
           - "*"
+    ignore:
+      # rand is pinned to 0.8 and must move with truco-engine and truco-server.
+      #
+      # truco-bot-core hands its own RNG to the engine's
+      # analyze_tactical_turn_sampled<R: Rng> (heuristic/mod.rs), and
+      # truco-server instantiates this crate's Rng-bounded generics with its
+      # StdRng. A 0.9 RNG cannot satisfy a 0.8 Rng bound, so all three repos
+      # move together or not at all.
+      #
+      # rand 0.9 also rewrote small-range integer sampling, so gen_range over
+      # legal actions and SliceRandom::shuffle draw differently from the same
+      # seed, changing seeded bot behavior. truco-spec's seeded exploration
+      # fixtures record specific selections and would break; see "Sampling
+      # Determinism" in that repo's exploration CONTRACT.
+      #
+      # The usual security argument does not apply: rand is built without its
+      # serde feature here, so the UniformChar Deserialize fix in 0.9.5 is not
+      # in a compiled code path.
+      #
+      # Without this ignore Dependabot refiles a rand bump every week that has
+      # to be closed by hand (see the closed rand PRs in this repo).
+      - dependency-name: rand
+        versions:
+          - ">= 0.9"
 
   - package-ecosystem: github-actions
     directory: /
