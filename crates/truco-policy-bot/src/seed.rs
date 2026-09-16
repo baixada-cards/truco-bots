@@ -358,10 +358,6 @@ pub fn store_covers_spec(store: &PolicyStore, spec: &SeedSpec) -> bool {
     )
 }
 
-/// Threads used to overlap candidate-likelihood lookups. Sized for I/O
-/// concurrency, deliberately not for cores.
-const LIKELIHOOD_THREADS: usize = 32;
-
 /// Default wall-clock ceiling on posterior scoring before it degrades to the
 /// prior. Generous: the parallel fan-out finishes in seconds even cold, so
 /// this only fires when the mount is pathologically slow, and it keeps a
@@ -382,37 +378,6 @@ fn posterior_budget() -> Duration {
                 .unwrap_or(DEFAULT_POSTERIOR_BUDGET_MS),
         )
     })
-}
-
-/// Pool for the candidate fan-out.
-///
-/// Each candidate hand's likelihood is an independent binary search over a
-/// memory-mapped profile. When the artifacts sit on a network-backed mount
-/// (Cloud Run's Cloud Storage FUSE volume) every probe is a page fault that
-/// costs a network round trip, so this work is I/O-bound, not CPU-bound: a
-/// cold draft-less seeded create measured 53s scoring candidates one at a
-/// time. Rayon's global pool is sized to cores and would be a *single* thread
-/// on the one-vCPU runtime, buying nothing, so use a dedicated pool whose
-/// width reflects how many reads we want in flight. Threads waiting on a page
-/// fault consume no CPU.
-fn likelihood_pool() -> Option<&'static rayon::ThreadPool> {
-    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
-    POOL.get_or_init(|| {
-        match rayon::ThreadPoolBuilder::new()
-            .num_threads(LIKELIHOOD_THREADS)
-            .thread_name(|index| format!("seed-posterior-{index}"))
-            .build()
-        {
-            Ok(pool) => Some(pool),
-            Err(error) => {
-                eprintln!(
-                    "seeded posterior: no thread pool ({error}); scoring candidates serially"
-                );
-                None
-            }
-        }
-    })
-    .as_ref()
 }
 
 /// One enumerated way to fill a seat's unknown cards.
@@ -561,7 +526,7 @@ pub(crate) fn build_seeded_hand_within(
             // Rayon preserves input order when collecting from an indexed
             // parallel iterator, so the weights stay aligned with `comps` and
             // seeded sampling remains reproducible.
-            match likelihood_pool() {
+            match crate::mount_io::mount_io_pool() {
                 Some(pool) => {
                     pool.install(|| comps.par_iter().map(score).collect::<Option<Vec<f64>>>())
                 }
