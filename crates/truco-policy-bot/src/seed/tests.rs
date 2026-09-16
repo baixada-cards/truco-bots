@@ -2,6 +2,7 @@
 //! conditioning against a synthetic artifact, and replay validation.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -13,7 +14,8 @@ use truco_policy_format::file::write_bot_policy;
 use truco_policy_format::info_set::{AbstractAction, InfoSet};
 
 use super::{
-    build_seeded_hand, SeedError, SeedSpec, SeededActionKind, SeededHistoryAction, VillainSampling,
+    build_seeded_hand, build_seeded_hand_within, SeedError, SeedSpec, SeededActionKind,
+    SeededHistoryAction, VillainSampling,
 };
 use crate::PolicyStore;
 
@@ -350,4 +352,32 @@ fn invalid_lines_refuse_cleanly() {
         build_seeded_hand(&spec, None, &mut rng),
         Err(SeedError::History(_))
     ));
+}
+
+#[test]
+fn exhausted_posterior_budget_degrades_to_prior_and_says_so() {
+    // The artifacts answer fine, but the wall-clock ceiling is already spent.
+    // Scoring must abandon the posterior and say `Prior` rather than stall:
+    // on a network-backed mount a cold fan-out is the slow case, and an
+    // honest cheaper hand beats blowing the hosting request timeout.
+    let history = vec![act(1, SeededActionKind::PlayFaceUp { class: 3 })];
+    let spec = ten_ten_spec(history);
+    let marker = 8u8;
+    let store = posterior_store(&spec, 3, marker, "budget");
+
+    let mut rng = StdRng::seed_from_u64(11);
+    let seeded = build_seeded_hand_within(&spec, Some(&store), &mut rng, Duration::ZERO)
+        .expect("seeded hand");
+    assert_eq!(seeded.sampling, VillainSampling::Prior);
+    // The position is still realized correctly: the committed play is held and
+    // the line replayed, only the hand's *weighting* degraded.
+    let classes = villain_classes(&seeded.state, 1);
+    assert_eq!(classes.len(), 3);
+    assert!(classes.contains(&3), "the committed play must be in hand");
+    assert_eq!(seeded.log.len(), 1);
+
+    // Same spot with the real budget still conditions on the equilibrium.
+    let mut rng = StdRng::seed_from_u64(11);
+    let generous = build_seeded_hand(&spec, Some(&store), &mut rng).expect("seeded hand");
+    assert_eq!(generous.sampling, VillainSampling::Posterior);
 }

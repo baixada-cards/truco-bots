@@ -1123,6 +1123,7 @@ name = "truco-policy-bot"
 version = "0.1.0"
 dependencies = [
  "rand 0.8.7",
+ "rayon",
  "serde",
  "smallvec",
  "thiserror",
