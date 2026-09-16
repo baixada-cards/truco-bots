@@ -21,9 +21,11 @@
 
 use rand::rngs::StdRng;
 use rand::Rng;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use truco_engine::{Action, Card, Hands, Match, MatchState, Player, Rank, Score, Suit, Turnup};
 use truco_policy_format::abstraction::{
@@ -356,6 +358,28 @@ pub fn store_covers_spec(store: &PolicyStore, spec: &SeedSpec) -> bool {
     )
 }
 
+/// Default wall-clock ceiling on posterior scoring before it degrades to the
+/// prior. Generous: the parallel fan-out finishes in seconds even cold, so
+/// this only fires when the mount is pathologically slow, and it keeps a
+/// seeded create well inside the hosting request timeout.
+const DEFAULT_POSTERIOR_BUDGET_MS: u64 = 20_000;
+
+/// Overrides [`DEFAULT_POSTERIOR_BUDGET_MS`], so the ceiling can be retuned
+/// from the deployment without a code change.
+pub const POSTERIOR_BUDGET_ENV: &str = "TRUCO_SEED_POSTERIOR_BUDGET_MS";
+
+fn posterior_budget() -> Duration {
+    static BUDGET: OnceLock<Duration> = OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        Duration::from_millis(
+            std::env::var(POSTERIOR_BUDGET_ENV)
+                .ok()
+                .and_then(|raw| raw.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_POSTERIOR_BUDGET_MS),
+        )
+    })
+}
+
 /// One enumerated way to fill a seat's unknown cards.
 struct Completion {
     classes: Vec<u8>,
@@ -369,6 +393,17 @@ pub fn build_seeded_hand(
     spec: &SeedSpec,
     store: Option<&Arc<PolicyStore>>,
     rng: &mut StdRng,
+) -> Result<SeededHand, SeedError> {
+    build_seeded_hand_within(spec, store, rng, posterior_budget())
+}
+
+/// [`build_seeded_hand`] with an explicit posterior ceiling, so tests can pin
+/// the degrade-to-prior backstop without racing on a process-wide cache.
+pub(crate) fn build_seeded_hand_within(
+    spec: &SeedSpec,
+    store: Option<&Arc<PolicyStore>>,
+    rng: &mut StdRng,
+    budget: Duration,
 ) -> Result<SeededHand, SeedError> {
     if !matches!(spec.human_player, 0 | 1) || !matches!(spec.dealer, 0 | 1) {
         return Err(SeedError::Invalid("seats must be 0 or 1".into()));
@@ -467,23 +502,36 @@ pub fn build_seeded_hand(
     // literal zero there would falsely nuke the other seat's posterior).
     // `None` anywhere means the artifacts cannot answer; degrade to prior.
     let seat_acted = |seat: Player| spec.history.iter().any(|entry| entry.seat == seat);
+    // Candidates are scored concurrently (see `likelihood_pool`) under a
+    // wall-clock ceiling; blowing the ceiling yields `None`, which takes the
+    // same honest degrade-to-prior path as missing artifacts.
+    let deadline = Instant::now() + budget;
     let likelihoods =
         |store: &Arc<PolicyStore>, seat: Player, base: &[u8], comps: &[Completion]| {
             if !seat_acted(seat) {
                 return Some(vec![1.0; comps.len()]);
             }
-            comps
-                .iter()
-                .map(|comp| {
-                    let mut hand: AbstractHand = base
-                        .iter()
-                        .chain(comp.classes.iter())
-                        .map(|&class| AbstractCard::from_type_index(class as usize))
-                        .collect();
-                    hand.sort();
-                    line_likelihood(spec, store, seat, &hand)
-                })
-                .collect::<Option<Vec<f64>>>()
+            let score = |comp: &Completion| {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                let mut hand: AbstractHand = base
+                    .iter()
+                    .chain(comp.classes.iter())
+                    .map(|&class| AbstractCard::from_type_index(class as usize))
+                    .collect();
+                hand.sort();
+                line_likelihood(spec, store, seat, &hand)
+            };
+            // Rayon preserves input order when collecting from an indexed
+            // parallel iterator, so the weights stay aligned with `comps` and
+            // seeded sampling remains reproducible.
+            match crate::mount_io::mount_io_pool() {
+                Some(pool) => {
+                    pool.install(|| comps.par_iter().map(score).collect::<Option<Vec<f64>>>())
+                }
+                None => comps.iter().map(score).collect::<Option<Vec<f64>>>(),
+            }
         };
     let uniform = |n: usize| vec![1.0f64; n];
     let mut posterior_ok = false;

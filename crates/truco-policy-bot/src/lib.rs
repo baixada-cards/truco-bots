@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rayon::prelude::*;
 use smallvec::SmallVec;
 
 use truco_bot_core::{
@@ -32,7 +33,7 @@ use truco_engine::{Action, Card, Player, Turnup};
 use truco_policy_format::abstraction::{abstract_card, turnup_class, AbstractHand};
 use truco_policy_format::file::{BotPolicyEntry, BotPolicyFile};
 use truco_policy_format::info_set::{AbstractAction, InfoSet};
-use truco_policy_format::manifest::PolicyManifest;
+use truco_policy_format::manifest::{PolicyManifest, PolicyProfile};
 
 /// One action as observed by the hosting service, in hand order. `card` is
 /// resolved at log time for play actions (the service sees the authoritative
@@ -71,8 +72,11 @@ impl PolicyStore {
             .map_err(|e| PolicyStoreError::Manifest(format!("{}: {e}", manifest_path.display())))?;
         let manifest =
             PolicyManifest::parse(&raw).map_err(|e| PolicyStoreError::Manifest(e.to_string()))?;
-        let mut profiles = HashMap::with_capacity(manifest.profiles.len());
-        for profile in manifest.profiles {
+        // One open per solved profile, and on a network-backed mount each one
+        // is a round trip: opening 225 of them serially measured ~23s, which
+        // a caller pays on the first solver request of a cold instance. The
+        // opens are independent, so overlap them (see `mount_io`).
+        let open = |profile: &PolicyProfile| {
             let file = BotPolicyFile::open(&dir.join(&profile.file)).map_err(|e| {
                 PolicyStoreError::Profile {
                     file: profile.file.clone(),
@@ -85,10 +89,24 @@ impl PolicyStore {
                 profile.tc,
                 profile.dealer,
             );
-            profiles.insert(key, file);
-        }
+            Ok((key, file))
+        };
+        let opened: Vec<(ProfileKey, BotPolicyFile)> = match crate::mount_io::mount_io_pool() {
+            Some(pool) => pool.install(|| {
+                manifest
+                    .profiles
+                    .par_iter()
+                    .map(open)
+                    .collect::<Result<Vec<_>, PolicyStoreError>>()
+            }),
+            None => manifest
+                .profiles
+                .iter()
+                .map(open)
+                .collect::<Result<Vec<_>, PolicyStoreError>>(),
+        }?;
         Ok(Self {
-            profiles,
+            profiles: opened.into_iter().collect(),
             dir: dir.to_path_buf(),
         })
     }
@@ -372,6 +390,7 @@ fn concrete_choices(
     choices
 }
 
+mod mount_io;
 pub mod seed;
 
 #[cfg(test)]

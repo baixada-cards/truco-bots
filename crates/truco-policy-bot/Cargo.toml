@@ -10,5 +10,6 @@ truco-bot-core = { path = "../truco-bot-core" }
 truco-policy-format.workspace = true
 serde = { workspace = true }
 rand = { workspace = true }
+rayon = "1.12"
 thiserror = { workspace = true }
 smallvec = { version = "1.11", features = ["serde"] }
